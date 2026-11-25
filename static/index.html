@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StreamGuard AI — Kafka &amp; LangGraph RCA Dashboard</title>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --card: #111827;
+      --border: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #38bdf8;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --crit: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+      line-height: 1.5;
+    }
+    .container { max-width: 1120px; margin: 0 auto; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    h1 { font-size: 1.5rem; color: #f8fafc; }
+    .subtitle { color: var(--muted); font-size: 0.9rem; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    select, button {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid #334155;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    button.primary {
+      background: #0284c7;
+      border-color: #0284c7;
+      font-weight: 600;
+    }
+    button.primary:hover { background: #0369a1; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .card-label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .card-value { font-size: 1.65rem; font-weight: 700; margin-top: 6px; }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1.25fr;
+      gap: 16px;
+    }
+    @media (max-width: 840px) { .two-col { grid-template-columns: 1fr; } }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+    .INFO { background: rgba(34, 197, 94, 0.15); color: var(--ok); }
+    .WARNING { background: rgba(245, 158, 11, 0.15); color: var(--warn); }
+    .CRITICAL { background: rgba(239, 68, 68, 0.15); color: var(--crit); }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; }
+    pre, code {
+      background: #020617;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-family: Consolas, monospace;
+      font-size: 0.83rem;
+      display: block;
+      overflow-x: auto;
+      margin-top: 6px;
+    }
+    ul { margin-left: 18px; margin-top: 6px; }
+    li { margin-bottom: 4px; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>StreamGuard AI</h1>
+        <div class="subtitle">Apache Kafka Reliability Monitor &amp; LangGraph Agentic RCA Assistant</div>
+      </div>
+      <div class="controls">
+        <select id="scenarioSelect">
+          <option value="healthy">Healthy Cluster</option>
+          <option value="consumer_lag">Simulate: High Consumer Lag</option>
+          <option value="broker_offline">Simulate: Broker Offline</option>
+          <option value="disk_pressure">Simulate: Linux Disk Pressure</option>
+          <option value="cpu_spike">Simulate: CPU &amp; Memory Spike</option>
+        </select>
+        <button onclick="applyScenario()">Apply Scenario</button>
+        <button class="primary" onclick="runDiagnosis()">Run LangGraph RCA</button>
+      </div>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-label">Kafka Brokers Online</div>
+        <div class="card-value" id="brokersVal">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Max Consumer Lag</div>
+        <div class="card-value" id="lagVal">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Linux CPU / RAM</div>
+        <div class="card-value" id="cpuRamVal">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Disk Utilization</div>
+        <div class="card-value" id="diskVal">--</div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="card">
+        <h2 style="font-size:1.05rem;">Topic &amp; Partition Telemetry</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Topic</th>
+              <th>Partitions</th>
+              <th>Under-Rep</th>
+              <th>Lag</th>
+            </tr>
+          </thead>
+          <tbody id="topicsBody"></tbody>
+        </table>
+        <h3 style="font-size:0.95rem; margin-top:16px; color:var(--muted);">Recent JSON Logs</h3>
+        <pre id="logsPre">Loading...</pre>
+      </div>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h2 style="font-size:1.05rem;">LangGraph Agent RCA Report</h2>
+          <span id="severityBadge" class="badge INFO">READY</span>
+        </div>
+        <div id="rcaBody" style="margin-top:12px; color:var(--muted);">
+          Click <strong>Run LangGraph RCA</strong> to execute telemetry collection, FAISS RAG runbook retrieval, and structured root cause synthesis.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function refreshMetrics() {
+      const res = await fetch('/api/metrics');
+      const data = await res.json();
+      document.getElementById('scenarioSelect').value = data.scenario;
+      document.getElementById('brokersVal').textContent = `${data.kafka.brokers_online} / ${data.kafka.brokers_expected}`;
+      const maxLag = Math.max(...data.kafka.topics.map(t => t.total_lag), 0);
+      document.getElementById('lagVal').textContent = maxLag.toLocaleString();
+      document.getElementById('cpuRamVal').textContent = `${data.host.cpu_percent}% / ${data.host.memory_percent}%`;
+      document.getElementById('diskVal').textContent = `${data.host.disk_percent}%`;
+
+      const tbody = document.getElementById('topicsBody');
+      tbody.innerHTML = data.kafka.topics.map(t => `
+        <tr>
+          <td>${t.topic}</td>
+          <td>${t.partitions}</td>
+          <td>${t.under_replicated_partitions}</td>
+          <td>${t.total_lag.toLocaleString()}</td>
+        </tr>
+      `).join('');
+
+      document.getElementById('logsPre').textContent = JSON.stringify(data.kafka.recent_logs, null, 2);
+    }
+
+    async function applyScenario() {
+      const scenario = document.getElementById('scenarioSelect').value;
+      await fetch('/api/simulate-incident', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenario })
+      });
+      await refreshMetrics();
+      await runDiagnosis();
+    }
+
+    async function runDiagnosis() {
+      const res = await fetch('/api/diagnose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: 'Diagnose Kafka cluster and Linux host metrics' })
+      });
+      const data = await res.json();
+      const rca = data.rca_report;
+      const badge = document.getElementById('severityBadge');
+      badge.className = `badge ${rca.severity}`;
+      badge.textContent = rca.severity;
+
+      document.getElementById('rcaBody').innerHTML = `
+        <p><strong>Summary:</strong> ${rca.summary}</p>
+        <p style="margin-top:8px;"><strong>Root Cause:</strong> ${rca.root_cause}</p>
+        <p style="margin-top:8px;"><strong>Matched RAG Runbooks:</strong> ${rca.matched_runbooks.join(', ') || 'None'}</p>
+        <p style="margin-top:8px;"><strong>Recommended Commands:</strong></p>
+        ${rca.remediation_commands.map(cmd => `<code>${cmd}</code>`).join('')}
+      `;
+    }
+
+    refreshMetrics();
+  </script>
+</body>
+</html>
